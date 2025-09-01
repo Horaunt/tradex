@@ -2,7 +2,7 @@ import os, uuid, json
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from instruments import load_instruments, resolve
-from broker import place_limit_option
+from broker import place_limit_option, place_stoploss_order, place_target_order
 from notify import push_fcm
 from dotenv import load_dotenv
 
@@ -168,15 +168,15 @@ def order(c: Confirm):
     print(f"  - quantity: {quantity} (final calculated quantity)")
     print(f"  - side: {c.side.upper()}")
     
-    # Check for stoploss and target
-    has_stoploss = c.stoploss is not None
-    has_target = c.target is not None
-    print(f"[DEBUG] Exit orders requested - Stoploss: {has_stoploss}, Target: {has_target}")
+    # Check for stoploss and target (ignore if 0 or None)
+    has_stoploss = c.stoploss is not None and c.stoploss > 0
+    has_target = c.target is not None and c.target > 0
+    print(f"[DEBUG] Exit orders requested - Stoploss: {has_stoploss} (value: {c.stoploss}), Target: {has_target} (value: {c.target})")
     
     if has_stoploss:
-        print(f"[DEBUG] Stoploss price: {c.stoploss}")
+        print(f"[DEBUG] Stoploss trigger price: {c.stoploss}")
     if has_target:
-        print(f"[DEBUG] Target price: {c.target}")
+        print(f"[DEBUG] Target limit price: {c.target}")
 
     # Place the main order
     main_order_id = None
@@ -206,22 +206,23 @@ def order(c: Confirm):
             print(f"[DEBUG] Stoploss order parameters:")
             print(f"  - tradingsymbol: {tradingsymbol}")
             print(f"  - exchange: {exchange}")
-            print(f"  - price: {c.stoploss}")
+            print(f"  - trigger_price: {c.stoploss}")
             print(f"  - quantity: {quantity}")
             print(f"  - side: SELL (exit order)")
             
-            stoploss_order_id = place_limit_option(
+            stoploss_order_id = place_stoploss_order(
                 tradingsymbol,
                 exchange,
-                c.stoploss,
+                c.stoploss,  # trigger price
                 quantity,
                 "SELL",  # Always SELL for exit
+                "STOPLOSS"
             )
             print(f"[DEBUG] Stoploss order placed successfully: order_id={stoploss_order_id}")
             
         except Exception as e:
             print(f"[ERROR] Failed to place stoploss order: {e}")
-            print(f"[ERROR] Stoploss parameters were: symbol={tradingsymbol}, quantity={quantity}, price={c.stoploss}")
+            print(f"[ERROR] Stoploss parameters were: symbol={tradingsymbol}, quantity={quantity}, trigger_price={c.stoploss}")
             print(f"[WARNING] Main order was placed successfully: {main_order_id}")
             # Don't fail the entire request if stoploss fails
             stoploss_order_id = f"FAILED: {str(e)}"
@@ -233,22 +234,23 @@ def order(c: Confirm):
             print(f"[DEBUG] Target order parameters:")
             print(f"  - tradingsymbol: {tradingsymbol}")
             print(f"  - exchange: {exchange}")
-            print(f"  - price: {c.target}")
+            print(f"  - limit_price: {c.target}")
             print(f"  - quantity: {quantity}")
             print(f"  - side: SELL (exit order)")
             
-            target_order_id = place_limit_option(
+            target_order_id = place_target_order(
                 tradingsymbol,
                 exchange,
-                c.target,
+                c.target,  # limit price
                 quantity,
                 "SELL",  # Always SELL for exit
+                "TARGET"
             )
             print(f"[DEBUG] Target order placed successfully: order_id={target_order_id}")
             
         except Exception as e:
             print(f"[ERROR] Failed to place target order: {e}")
-            print(f"[ERROR] Target parameters were: symbol={tradingsymbol}, quantity={quantity}, price={c.target}")
+            print(f"[ERROR] Target parameters were: symbol={tradingsymbol}, quantity={quantity}, limit_price={c.target}")
             print(f"[WARNING] Main order was placed successfully: {main_order_id}")
             # Don't fail the entire request if target fails
             target_order_id = f"FAILED: {str(e)}"

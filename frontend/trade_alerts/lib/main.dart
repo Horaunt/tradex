@@ -81,8 +81,6 @@ class TradeAlert {
   }
 }
 
-
-
 // Firebase background message handler
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
@@ -246,7 +244,7 @@ class _TradeAlertHomePageState extends State<TradeAlertHomePage> {
 
     try {
       final response = await http.post(
-        Uri.parse('http://172.16.204.18:8000/order'),
+        Uri.parse('http://10.42.204.215:8000/order'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'trade_id': _currentTradeAlert!.tradeId,
@@ -379,12 +377,27 @@ class _TradeAlertHomePageState extends State<TradeAlertHomePage> {
                   ),
                   const SizedBox(height: 16),
                   _buildTradeDetailRow('Title', _currentTradeAlert!.title),
-                  _buildTradeDetailRow('Underlying', _currentTradeAlert!.underlying),
-                  _buildTradeDetailRow('Strike Price', _currentTradeAlert!.strike),
+                  _buildTradeDetailRow(
+                    'Underlying',
+                    _currentTradeAlert!.underlying,
+                  ),
+                  _buildTradeDetailRow(
+                    'Strike Price',
+                    _currentTradeAlert!.strike,
+                  ),
                   _buildTradeDetailRow('Option Type', _currentTradeAlert!.opt),
-                  _buildTradeDetailRow('Expiry Date', '${_currentTradeAlert!.day}/${_currentTradeAlert!.month}/${_currentTradeAlert!.year}'),
-                  _buildTradeDetailRow('Entry Range', '${_currentTradeAlert!.entryLow} - ${_currentTradeAlert!.entryHigh}'),
-                  _buildTradeDetailRow('Stop Loss', _currentTradeAlert!.stoploss),
+                  _buildTradeDetailRow(
+                    'Expiry Date',
+                    '${_currentTradeAlert!.day}/${_currentTradeAlert!.month}/${_currentTradeAlert!.year}',
+                  ),
+                  _buildTradeDetailRow(
+                    'Entry Range',
+                    '${_currentTradeAlert!.entryLow} - ${_currentTradeAlert!.entryHigh}',
+                  ),
+                  _buildTradeDetailRow(
+                    'Stop Loss',
+                    _currentTradeAlert!.stoploss,
+                  ),
                   const SizedBox(height: 8),
                   Text(
                     'Targets:',
@@ -400,7 +413,7 @@ class _TradeAlertHomePageState extends State<TradeAlertHomePage> {
                       padding: const EdgeInsets.only(left: 16.0, bottom: 4.0),
                       child: Text('Target ${index + 1}: $target'),
                     );
-                  }).toList(),
+                  }),
                 ],
               ),
             ),
@@ -509,7 +522,8 @@ class TradeConfirmationDialog extends StatefulWidget {
   const TradeConfirmationDialog({super.key, required this.tradeAlert});
 
   @override
-  State<TradeConfirmationDialog> createState() => _TradeConfirmationDialogState();
+  State<TradeConfirmationDialog> createState() =>
+      _TradeConfirmationDialogState();
 }
 
 class _TradeConfirmationDialogState extends State<TradeConfirmationDialog> {
@@ -523,12 +537,16 @@ class _TradeConfirmationDialogState extends State<TradeConfirmationDialog> {
 
     try {
       final response = await http.post(
-        Uri.parse('http://172.16.204.18:8000/order'),
+        Uri.parse('http://10.42.204.215:8000/order'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'trade_id': widget.tradeAlert.tradeId,
           'lots': _selectedLots,
           'side': 'BUY',
+          'stoploss': double.tryParse(widget.tradeAlert.stoploss)?.toInt() ?? 0,
+          'target': widget.tradeAlert.targets.isNotEmpty 
+              ? widget.tradeAlert.targets.first.toInt() 
+              : 0,
         }),
       );
 
@@ -620,7 +638,7 @@ class _TradeConfirmationDialogState extends State<TradeConfirmationDialog> {
                 ],
               ),
             ),
-            
+
             // Content
             Flexible(
               child: SingleChildScrollView(
@@ -631,13 +649,22 @@ class _TradeConfirmationDialogState extends State<TradeConfirmationDialog> {
                     _buildDetailRow('Underlying', widget.tradeAlert.underlying),
                     _buildDetailRow('Strike Price', widget.tradeAlert.strike),
                     _buildDetailRow('Option Type', widget.tradeAlert.opt),
-                    _buildDetailRow('Expiry Date', '${widget.tradeAlert.day}/${widget.tradeAlert.month}/${widget.tradeAlert.year}'),
-                    _buildDetailRow('Entry Range', '${widget.tradeAlert.entryLow} - ${widget.tradeAlert.entryHigh}'),
+                    _buildDetailRow(
+                      'Expiry Date',
+                      '${widget.tradeAlert.day}/${widget.tradeAlert.month}/${widget.tradeAlert.year}',
+                    ),
+                    _buildDetailRow(
+                      'Entry Range',
+                      '${widget.tradeAlert.entryLow} - ${widget.tradeAlert.entryHigh}',
+                    ),
                     _buildDetailRow('Stop Loss', widget.tradeAlert.stoploss),
                     _buildDetailRow('Exchange', widget.tradeAlert.exchange),
-                    _buildDetailRow('Trading Symbol', widget.tradeAlert.tradingSymbol),
+                    _buildDetailRow(
+                      'Trading Symbol',
+                      widget.tradeAlert.tradingSymbol,
+                    ),
                     _buildDetailRow('Trade ID', widget.tradeAlert.tradeId),
-                    
+
                     // Targets section
                     if (widget.tradeAlert.targets.isNotEmpty) ...[
                       const SizedBox(height: 8),
@@ -653,17 +680,20 @@ class _TradeConfirmationDialogState extends State<TradeConfirmationDialog> {
                         int index = entry.key;
                         double target = entry.value;
                         return Padding(
-                          padding: const EdgeInsets.only(left: 16.0, bottom: 4.0),
+                          padding: const EdgeInsets.only(
+                            left: 16.0,
+                            bottom: 4.0,
+                          ),
                           child: Text(
                             'Target ${index + 1}: $target',
                             style: const TextStyle(fontWeight: FontWeight.w500),
                           ),
                         );
-                      }).toList(),
+                      }),
                     ],
-                    
+
                     const SizedBox(height: 24),
-                    
+
                     // Lot Selection
                     Container(
                       padding: const EdgeInsets.all(16),
@@ -722,7 +752,7 @@ class _TradeConfirmationDialogState extends State<TradeConfirmationDialog> {
                 ),
               ),
             ),
-            
+
             // Action Buttons
             Container(
               padding: const EdgeInsets.all(20),
@@ -753,7 +783,9 @@ class _TradeConfirmationDialogState extends State<TradeConfirmationDialog> {
                               ),
                             )
                           : const Icon(Icons.check),
-                      label: Text(_isLoading ? 'Placing...' : 'Confirm & Place Order'),
+                      label: Text(
+                        _isLoading ? 'Placing...' : 'Confirm & Place Order',
+                      ),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.green,
                         foregroundColor: Colors.white,
@@ -772,7 +804,7 @@ class _TradeConfirmationDialogState extends State<TradeConfirmationDialog> {
 
   Widget _buildDetailRow(String label, String value) {
     if (value.isEmpty) return const SizedBox.shrink();
-    
+
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: Row(
