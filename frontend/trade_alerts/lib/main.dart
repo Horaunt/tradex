@@ -4,6 +4,9 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 
+// Trade Status Enum
+enum TradeStatus { pending, placed, rejected }
+
 // Trade Alert Data Model
 class TradeAlert {
   final String underlying;
@@ -22,6 +25,8 @@ class TradeAlert {
   final String tradeId;
   final String title;
   final String entry;
+  final TradeStatus status;
+  final DateTime timestamp;
 
   TradeAlert({
     required this.underlying,
@@ -40,7 +45,9 @@ class TradeAlert {
     required this.tradeId,
     required this.title,
     required this.entry,
-  });
+    this.status = TradeStatus.pending,
+    DateTime? timestamp,
+  }) : timestamp = timestamp ?? DateTime.now();
 
   factory TradeAlert.fromJson(Map<String, dynamic> json) {
     List<double> parseTargets(dynamic targetsData) {
@@ -77,6 +84,33 @@ class TradeAlert {
       tradeId: json['trade_id'] ?? '',
       title: json['title'] ?? '',
       entry: json['entry'] ?? '',
+    );
+  }
+
+  // Copy with method for status updates
+  TradeAlert copyWith({
+    TradeStatus? status,
+    DateTime? timestamp,
+  }) {
+    return TradeAlert(
+      underlying: underlying,
+      day: day,
+      month: month,
+      year: year,
+      strike: strike,
+      opt: opt,
+      entryLow: entryLow,
+      entryHigh: entryHigh,
+      stoploss: stoploss,
+      targets: targets,
+      instrumentToken: instrumentToken,
+      tradingSymbol: tradingSymbol,
+      exchange: exchange,
+      tradeId: tradeId,
+      title: title,
+      entry: entry,
+      status: status ?? this.status,
+      timestamp: timestamp ?? this.timestamp,
     );
   }
 }
@@ -119,9 +153,19 @@ class TradeAlertHomePage extends StatefulWidget {
 }
 
 class _TradeAlertHomePageState extends State<TradeAlertHomePage> {
-  final TextEditingController _lotsController = TextEditingController();
-  TradeAlert? _currentTradeAlert;
+  List<TradeAlert> _tradeAlerts = [];
   bool _isLoading = false;
+  final TextEditingController _lotsController = TextEditingController();
+
+  // Getters for filtered trade lists
+  List<TradeAlert> get pendingTrades => 
+      _tradeAlerts.where((trade) => trade.status == TradeStatus.pending).toList();
+  
+  List<TradeAlert> get placedTrades => 
+      _tradeAlerts.where((trade) => trade.status == TradeStatus.placed).toList();
+  
+  List<TradeAlert> get rejectedTrades => 
+      _tradeAlerts.where((trade) => trade.status == TradeStatus.rejected).toList();
   String? _fcmToken;
 
   @override
@@ -160,9 +204,9 @@ class _TradeAlertHomePageState extends State<TradeAlertHomePage> {
           _showNotificationDialog(message);
         }
 
-        // Show trade confirmation dialog for new trade alerts
+        // Add new trade alert to list
         if (message.data.isNotEmpty) {
-          _showTradeConfirmationDialog(message.data);
+          _addNewTradeAlert(message.data);
         }
       });
 
@@ -170,7 +214,7 @@ class _TradeAlertHomePageState extends State<TradeAlertHomePage> {
       FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
         print('A new onMessageOpenedApp event was published!');
         if (message.data.isNotEmpty) {
-          _showTradeConfirmationDialog(message.data);
+          _addNewTradeAlert(message.data);
         }
       });
     } catch (e) {
@@ -179,20 +223,25 @@ class _TradeAlertHomePageState extends State<TradeAlertHomePage> {
     }
   }
 
-  void _showTradeConfirmationDialog(Map<String, dynamic> data) {
+  void _addNewTradeAlert(Map<String, dynamic> data) {
     try {
       final tradeAlert = TradeAlert.fromJson(data);
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (BuildContext context) {
-          return TradeConfirmationDialog(tradeAlert: tradeAlert);
-        },
-      );
+      setState(() {
+        _tradeAlerts.insert(0, tradeAlert); // Add to beginning of list
+      });
     } catch (e) {
       print('Error parsing trade alert: $e');
       _showErrorDialog('Error parsing trade alert: $e');
     }
+  }
+
+  void _updateTradeStatus(String tradeId, TradeStatus status) {
+    setState(() {
+      final index = _tradeAlerts.indexWhere((trade) => trade.tradeId == tradeId);
+      if (index != -1) {
+        _tradeAlerts[index] = _tradeAlerts[index].copyWith(status: status);
+      }
+    });
   }
 
   void _showNotificationDialog(RemoteMessage message) {
@@ -215,29 +264,7 @@ class _TradeAlertHomePageState extends State<TradeAlertHomePage> {
     );
   }
 
-  Future<void> _placeTrade() async {
-    if (_currentTradeAlert == null) {
-      _showErrorDialog('No trade alert available');
-      return;
-    }
-
-    if (_lotsController.text.isEmpty) {
-      _showErrorDialog('Please enter number of lots');
-      return;
-    }
-
-    int lots;
-    try {
-      lots = int.parse(_lotsController.text);
-      if (lots <= 0) {
-        _showErrorDialog('Number of lots must be greater than 0');
-        return;
-      }
-    } catch (e) {
-      _showErrorDialog('Please enter a valid number for lots');
-      return;
-    }
-
+  Future<void> _placeTrade(TradeAlert trade, int lots) async {
     setState(() {
       _isLoading = true;
     });
@@ -247,19 +274,26 @@ class _TradeAlertHomePageState extends State<TradeAlertHomePage> {
         Uri.parse('http://10.42.204.215:8000/order'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
-          'trade_id': _currentTradeAlert!.tradeId,
+          'trade_id': trade.tradeId,
           'lots': lots,
           'side': 'BUY',
+          'stoploss': double.tryParse(trade.stoploss)?.toInt() ?? 0,
+          'target': trade.targets.isNotEmpty ? trade.targets.first.toInt() : 0,
         }),
       );
 
       if (response.statusCode == 200) {
-        _showSuccessDialog('Trade placed successfully!');
-        _lotsController.clear();
+        _updateTradeStatus(trade.tradeId, TradeStatus.placed);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Order placed successfully!'),
+            backgroundColor: Colors.green,
+          ),
+        );
       } else {
         final errorData = jsonDecode(response.body);
         _showErrorDialog(
-          'Failed to place trade: ${errorData['detail'] ?? 'Unknown error'}',
+          'Failed to place order: ${errorData['detail'] ?? 'Unknown error'}',
         );
       }
     } catch (e) {
@@ -271,14 +305,84 @@ class _TradeAlertHomePageState extends State<TradeAlertHomePage> {
     }
   }
 
-  void _skipTrade() {
-    setState(() {
-      _currentTradeAlert = null;
-      _lotsController.clear();
-    });
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('Trade skipped')));
+  void _rejectTrade(TradeAlert trade) {
+    _updateTradeStatus(trade.tradeId, TradeStatus.rejected);
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Trade rejected'),
+        backgroundColor: Colors.orange,
+      ),
+    );
+  }
+
+  void _showLotSelectionDialog(TradeAlert trade) {
+    int selectedLots = 1;
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              title: const Text('Select Lots'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text('How many lots for ${trade.title}?'),
+                  const SizedBox(height: 16),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      IconButton(
+                        onPressed: selectedLots > 1
+                            ? () => setState(() => selectedLots--)
+                            : null,
+                        icon: const Icon(Icons.remove_circle_outline),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 20,
+                          vertical: 8,
+                        ),
+                        decoration: BoxDecoration(
+                          border: Border.all(color: Colors.grey),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          '$selectedLots',
+                          style: const TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        onPressed: selectedLots < 10
+                            ? () => setState(() => selectedLots++)
+                            : null,
+                        icon: const Icon(Icons.add_circle_outline),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton(
+                  onPressed: () {
+                    Navigator.of(context).pop();
+                    _placeTrade(trade, selectedLots);
+                  },
+                  child: const Text('Place Order'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
   }
 
   void _showSuccessDialog(String message) {
@@ -325,16 +429,32 @@ class _TradeAlertHomePageState extends State<TradeAlertHomePage> {
         title: const Text('Trade Alerts'),
         centerTitle: true,
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: _currentTradeAlert == null
-            ? _buildWaitingView()
-            : _buildTradeAlertView(),
+      body: Column(
+        children: [
+          // Header
+          Container(
+            padding: const EdgeInsets.all(16),
+            child: Text(
+              _tradeAlerts.isEmpty 
+                  ? 'Waiting for Trade Alerts' 
+                  : 'Trade Alerts (${_tradeAlerts.length})',
+              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+          // Trade List
+          Expanded(
+            child: _tradeAlerts.isEmpty
+                ? _buildEmptyState()
+                : _buildTradeList(),
+          ),
+        ],
       ),
     );
   }
 
-  Widget _buildWaitingView() {
+  Widget _buildEmptyState() {
     return const Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -356,132 +476,53 @@ class _TradeAlertHomePageState extends State<TradeAlertHomePage> {
     );
   }
 
-  Widget _buildTradeAlertView() {
-    return SingleChildScrollView(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+  Widget _buildTradeList() {
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        // Pending Trades Section
+        if (pendingTrades.isNotEmpty) ...[
+          _buildSectionHeader('Pending Trades', Colors.orange, pendingTrades.length),
+          ...pendingTrades.map((trade) => _buildTradeCard(trade)),
+          const SizedBox(height: 16),
+        ],
+        
+        // Placed Trades Section
+        if (placedTrades.isNotEmpty) ...[
+          _buildSectionHeader('Placed Orders', Colors.green, placedTrades.length),
+          ...placedTrades.map((trade) => _buildTradeCard(trade)),
+          const SizedBox(height: 16),
+        ],
+        
+        // Rejected Trades Section
+        if (rejectedTrades.isNotEmpty) ...[
+          _buildSectionHeader('Rejected Trades', Colors.red, rejectedTrades.length),
+          ...rejectedTrades.map((trade) => _buildTradeCard(trade)),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildSectionHeader(String title, Color color, int count) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      child: Row(
         children: [
-          Card(
-            elevation: 4,
-            child: Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Latest Trade Alert',
-                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                      fontWeight: FontWeight.bold,
-                      color: Colors.blue,
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  _buildTradeDetailRow('Title', _currentTradeAlert!.title),
-                  _buildTradeDetailRow(
-                    'Underlying',
-                    _currentTradeAlert!.underlying,
-                  ),
-                  _buildTradeDetailRow(
-                    'Strike Price',
-                    _currentTradeAlert!.strike,
-                  ),
-                  _buildTradeDetailRow('Option Type', _currentTradeAlert!.opt),
-                  _buildTradeDetailRow(
-                    'Expiry Date',
-                    '${_currentTradeAlert!.day}/${_currentTradeAlert!.month}/${_currentTradeAlert!.year}',
-                  ),
-                  _buildTradeDetailRow(
-                    'Entry Range',
-                    '${_currentTradeAlert!.entryLow} - ${_currentTradeAlert!.entryHigh}',
-                  ),
-                  _buildTradeDetailRow(
-                    'Stop Loss',
-                    _currentTradeAlert!.stoploss,
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Targets:',
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  ..._currentTradeAlert!.targets.asMap().entries.map((entry) {
-                    int index = entry.key;
-                    double target = entry.value;
-                    return Padding(
-                      padding: const EdgeInsets.only(left: 16.0, bottom: 4.0),
-                      child: Text('Target ${index + 1}: $target'),
-                    );
-                  }),
-                ],
-              ),
+          Container(
+            width: 4,
+            height: 20,
+            decoration: BoxDecoration(
+              color: color,
+              borderRadius: BorderRadius.circular(2),
             ),
           ),
-          const SizedBox(height: 24),
-          Card(
-            elevation: 2,
-            child: Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Trade Action',
-                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  TextField(
-                    controller: _lotsController,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(
-                      labelText: 'Number of Lots',
-                      border: OutlineInputBorder(),
-                      prefixIcon: Icon(Icons.numbers),
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: ElevatedButton.icon(
-                          onPressed: _isLoading ? null : _placeTrade,
-                          icon: _isLoading
-                              ? const SizedBox(
-                                  width: 16,
-                                  height: 16,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                  ),
-                                )
-                              : const Icon(Icons.trending_up),
-                          label: Text(
-                            _isLoading ? 'Placing...' : 'Place Trade',
-                          ),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.green,
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed: _isLoading ? null : _skipTrade,
-                          icon: const Icon(Icons.skip_next),
-                          label: const Text('Skip'),
-                          style: OutlinedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
+          const SizedBox(width: 12),
+          Text(
+            '$title ($count)',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+              color: color,
             ),
           ),
         ],
@@ -489,9 +530,116 @@ class _TradeAlertHomePageState extends State<TradeAlertHomePage> {
     );
   }
 
-  Widget _buildTradeDetailRow(String label, String value) {
+  Widget _buildTradeCard(TradeAlert trade) {
+    Color statusColor;
+    switch (trade.status) {
+      case TradeStatus.pending:
+        statusColor = Colors.orange;
+        break;
+      case TradeStatus.placed:
+        statusColor = Colors.green;
+        break;
+      case TradeStatus.rejected:
+        statusColor = Colors.red;
+        break;
+    }
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: statusColor.withOpacity(0.3), width: 1),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Header with title and status
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      trade.title,
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: statusColor.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: statusColor.withOpacity(0.3)),
+                    ),
+                    child: Text(
+                      trade.status.name.toUpperCase(),
+                      style: TextStyle(
+                        color: statusColor,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              
+              // Trade details
+              _buildDetailRow('Underlying', trade.underlying),
+              _buildDetailRow('Strike', trade.strike),
+              _buildDetailRow('Option Type', trade.opt),
+              _buildDetailRow('Entry Range', '${trade.entryLow} - ${trade.entryHigh}'),
+              _buildDetailRow('Stop Loss', trade.stoploss),
+              if (trade.targets.isNotEmpty)
+                _buildDetailRow('Targets', trade.targets.map((t) => t.toString()).join(', ')),
+              
+              // Action buttons for pending trades
+              if (trade.status == TradeStatus.pending) ...[
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () => _rejectTrade(trade),
+                        icon: const Icon(Icons.close, size: 18),
+                        label: const Text('Reject'),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.red,
+                          side: const BorderSide(color: Colors.red),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        onPressed: () => _showLotSelectionDialog(trade),
+                        icon: const Icon(Icons.trending_up, size: 18),
+                        label: const Text('Place Order'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.green,
+                          foregroundColor: Colors.white,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDetailRow(String label, String value) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 8.0),
+      padding: const EdgeInsets.only(bottom: 8),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -512,322 +660,5 @@ class _TradeAlertHomePageState extends State<TradeAlertHomePage> {
   void dispose() {
     _lotsController.dispose();
     super.dispose();
-  }
-}
-
-// Trade Confirmation Dialog Widget
-class TradeConfirmationDialog extends StatefulWidget {
-  final TradeAlert tradeAlert;
-
-  const TradeConfirmationDialog({super.key, required this.tradeAlert});
-
-  @override
-  State<TradeConfirmationDialog> createState() =>
-      _TradeConfirmationDialogState();
-}
-
-class _TradeConfirmationDialogState extends State<TradeConfirmationDialog> {
-  int _selectedLots = 1;
-  bool _isLoading = false;
-
-  Future<void> _confirmTrade() async {
-    setState(() {
-      _isLoading = true;
-    });
-
-    try {
-      final response = await http.post(
-        Uri.parse('http://10.42.204.215:8000/order'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'trade_id': widget.tradeAlert.tradeId,
-          'lots': _selectedLots,
-          'side': 'BUY',
-          'stoploss': double.tryParse(widget.tradeAlert.stoploss)?.toInt() ?? 0,
-          'target': widget.tradeAlert.targets.isNotEmpty 
-              ? widget.tradeAlert.targets.first.toInt() 
-              : 0,
-        }),
-      );
-
-      if (response.statusCode == 200) {
-        Navigator.of(context).pop();
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Order placed successfully!'),
-            backgroundColor: Colors.green,
-          ),
-        );
-      } else {
-        final errorData = jsonDecode(response.body);
-        _showErrorDialog(
-          'Failed to place order: ${errorData['detail'] ?? 'Unknown error'}',
-        );
-      }
-    } catch (e) {
-      _showErrorDialog('Network error: $e');
-    } finally {
-      setState(() {
-        _isLoading = false;
-      });
-    }
-  }
-
-  Future<void> _rejectTrade() async {
-    // Simply dismiss the dialog for rejection
-    Navigator.of(context).pop();
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Trade rejected'),
-        backgroundColor: Colors.orange,
-      ),
-    );
-  }
-
-  void _showErrorDialog(String message) {
-    showDialog(
-      context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: const Text('Error'),
-          content: Text(message),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('OK'),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Dialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Container(
-        constraints: const BoxConstraints(maxWidth: 400, maxHeight: 600),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // Header
-            Container(
-              padding: const EdgeInsets.all(20),
-              decoration: const BoxDecoration(
-                color: Colors.blue,
-                borderRadius: BorderRadius.only(
-                  topLeft: Radius.circular(16),
-                  topRight: Radius.circular(16),
-                ),
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.trending_up, color: Colors.white, size: 24),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      'Trade Alert',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-
-            // Content
-            Flexible(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _buildDetailRow('Underlying', widget.tradeAlert.underlying),
-                    _buildDetailRow('Strike Price', widget.tradeAlert.strike),
-                    _buildDetailRow('Option Type', widget.tradeAlert.opt),
-                    _buildDetailRow(
-                      'Expiry Date',
-                      '${widget.tradeAlert.day}/${widget.tradeAlert.month}/${widget.tradeAlert.year}',
-                    ),
-                    _buildDetailRow(
-                      'Entry Range',
-                      '${widget.tradeAlert.entryLow} - ${widget.tradeAlert.entryHigh}',
-                    ),
-                    _buildDetailRow('Stop Loss', widget.tradeAlert.stoploss),
-                    _buildDetailRow('Exchange', widget.tradeAlert.exchange),
-                    _buildDetailRow(
-                      'Trading Symbol',
-                      widget.tradeAlert.tradingSymbol,
-                    ),
-                    _buildDetailRow('Trade ID', widget.tradeAlert.tradeId),
-
-                    // Targets section
-                    if (widget.tradeAlert.targets.isNotEmpty) ...[
-                      const SizedBox(height: 8),
-                      const Text(
-                        'Targets:',
-                        style: TextStyle(
-                          fontWeight: FontWeight.w600,
-                          color: Colors.grey,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      ...widget.tradeAlert.targets.asMap().entries.map((entry) {
-                        int index = entry.key;
-                        double target = entry.value;
-                        return Padding(
-                          padding: const EdgeInsets.only(
-                            left: 16.0,
-                            bottom: 4.0,
-                          ),
-                          child: Text(
-                            'Target ${index + 1}: $target',
-                            style: const TextStyle(fontWeight: FontWeight.w500),
-                          ),
-                        );
-                      }),
-                    ],
-
-                    const SizedBox(height: 24),
-
-                    // Lot Selection
-                    Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: Colors.grey[100],
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text(
-                            'Number of Lots',
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 16,
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-                          Row(
-                            children: [
-                              IconButton(
-                                onPressed: _selectedLots > 1
-                                    ? () => setState(() => _selectedLots--)
-                                    : null,
-                                icon: const Icon(Icons.remove_circle_outline),
-                              ),
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 20,
-                                  vertical: 8,
-                                ),
-                                decoration: BoxDecoration(
-                                  border: Border.all(color: Colors.grey),
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: Text(
-                                  '$_selectedLots',
-                                  style: const TextStyle(
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ),
-                              IconButton(
-                                onPressed: _selectedLots < 10
-                                    ? () => setState(() => _selectedLots++)
-                                    : null,
-                                icon: const Icon(Icons.add_circle_outline),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-
-            // Action Buttons
-            Container(
-              padding: const EdgeInsets.all(20),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: _isLoading ? null : _rejectTrade,
-                      icon: const Icon(Icons.close),
-                      label: const Text('Reject'),
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        foregroundColor: Colors.red,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: ElevatedButton.icon(
-                      onPressed: _isLoading ? null : _confirmTrade,
-                      icon: _isLoading
-                          ? const SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: Colors.white,
-                              ),
-                            )
-                          : const Icon(Icons.check),
-                      label: Text(
-                        _isLoading ? 'Placing...' : 'Confirm & Place Order',
-                      ),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.green,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildDetailRow(String label, String value) {
-    if (value.isEmpty) return const SizedBox.shrink();
-
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 120,
-            child: Text(
-              '$label:',
-              style: const TextStyle(
-                fontWeight: FontWeight.w600,
-                color: Colors.grey,
-              ),
-            ),
-          ),
-          Expanded(
-            child: Text(
-              value,
-              style: const TextStyle(fontWeight: FontWeight.w500),
-            ),
-          ),
-        ],
-      ),
-    );
   }
 }
