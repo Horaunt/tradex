@@ -15,7 +15,9 @@ TRADES = {}
 class Confirm(BaseModel):
     trade_id: str
     lots: int
-    side: str | None = "BUY"  # default to BUY if not provided
+    side: str | None = "BUY"
+    stoploss: float | None = None
+    target: float | None = None
 
 class Raw(BaseModel):
     text: str
@@ -68,25 +70,43 @@ def ingest(body: Raw):
         print(f"[ERROR] Instrument not found for: {data}")
         raise HTTPException(404, "instrument_not_found")
 
+    # Get lot size from resolved instrument data
+    lot_size = res.get("lot_size")
+    tradingsymbol = res.get("tradingsymbol")
+    
+    # Additional debugging for lot size
+    print(f"[DEBUG] Raw lot_size from resolve: {lot_size} (type: {type(lot_size)})")
+    print(f"[DEBUG] Trading symbol: {tradingsymbol}")
+    
+    # Ensure lot_size is a valid integer
+    try:
+        lot_size = int(lot_size) if lot_size is not None else None
+    except (ValueError, TypeError) as e:
+        print(f"[ERROR] Invalid lot_size format: {lot_size}, error: {e}")
+        lot_size = None
+    
+    if not lot_size or lot_size <= 0:
+        print(f"[ERROR] Invalid or missing lot size for instrument: {tradingsymbol}")
+        print(f"[ERROR] Full instrument data: {res}")
+        raise HTTPException(500, "invalid_lot_size")
+    
+    print(f"[DEBUG] Final validated lot_size: {lot_size}")
+
     tid = str(uuid.uuid4())
     payload = {
         **data,
         **res,
+        "lot_size": lot_size,  # Store the validated lot size
         "trade_id": tid,
         "title": f"{data['underlying']} {data['day']} {data['month']} {int(data['strike'])} {data['opt']}",
         "entry": f"{data['entry_low']}-{data['entry_high']}",
     }
+
     TRADES[tid] = payload
-    print(f"[DEBUG] Final trade payload to push: {payload}")
+    print(f"[DEBUG] Final trade payload stored: {payload}")
+    print(f"[DEBUG] Stored lot_size for trade {tid}: {TRADES[tid]['lot_size']}")
 
-    fcm_payload = {}
-    for k, v in payload.items():
-        if isinstance(v, (list, dict)):
-            fcm_payload[k] = json.dumps(v)
-        else:
-            fcm_payload[k] = str(v)
-
-    # 🔹 Print the exact JSON that gets sent to the app
+    fcm_payload = {k: json.dumps(v) if isinstance(v, (list, dict)) else str(v) for k, v in payload.items()}
     print("[FCM_PAYLOAD_JSON]", json.dumps(fcm_payload, indent=2))
 
     try:
@@ -101,28 +121,156 @@ def ingest(body: Raw):
 def order(c: Confirm):
     print(f"[DEBUG] Place order request received: {c.dict()}")
 
+    # Validate trade exists
     t = TRADES.get(c.trade_id)
     if not t:
         print(f"[ERROR] Trade not found for trade_id={c.trade_id}")
+        print(f"[DEBUG] Available trade_ids: {list(TRADES.keys())}")
         raise HTTPException(404, "trade_not_found")
 
+    # Get and validate lot size
+    lot_size = t.get("lot_size")
+    tradingsymbol = t.get("tradingsymbol")
+    exchange = t.get("exchange")
+    
+    print(f"[DEBUG] Retrieved lot_size: {lot_size} (type: {type(lot_size)})")
+    print(f"[DEBUG] Trading symbol: {tradingsymbol}")
+    print(f"[DEBUG] Exchange: {exchange}")
+    
+    if not lot_size:
+        print(f"[ERROR] Lot size not available for instrument: {tradingsymbol}")
+        print(f"[ERROR] Full trade data: {t}")
+        raise HTTPException(500, "lot_size_not_found")
+
+    # Ensure lot_size is integer for calculation
+    try:
+        lot_size = int(lot_size)
+    except (ValueError, TypeError) as e:
+        print(f"[ERROR] Invalid lot_size format in stored trade: {lot_size}, error: {e}")
+        raise HTTPException(500, "invalid_lot_size_format")
+
+    # Calculate final quantity - this is correct now
+    quantity = c.lots * lot_size
+    print(f"[DEBUG] Order calculation: {c.lots} lots × {lot_size} lot_size = {quantity} quantity")
+
+    # Validate entry price
     try:
         px = float(t["entry_high"])
+        print(f"[DEBUG] Order price: {px}")
     except Exception as e:
         print(f"[ERROR] Invalid entry_high value in trade={t}: {e}")
         raise HTTPException(500, "invalid_entry_price")
+    
+    print(f"[DEBUG] Final main order parameters:")
+    print(f"  - tradingsymbol: {tradingsymbol}")
+    print(f"  - exchange: {exchange}")
+    print(f"  - price: {px}")
+    print(f"  - quantity: {quantity} (final calculated quantity)")
+    print(f"  - side: {c.side.upper()}")
+    
+    # Check for stoploss and target
+    has_stoploss = c.stoploss is not None
+    has_target = c.target is not None
+    print(f"[DEBUG] Exit orders requested - Stoploss: {has_stoploss}, Target: {has_target}")
+    
+    if has_stoploss:
+        print(f"[DEBUG] Stoploss price: {c.stoploss}")
+    if has_target:
+        print(f"[DEBUG] Target price: {c.target}")
 
+    # Place the main order
+    main_order_id = None
+    stoploss_order_id = None
+    target_order_id = None
+    
     try:
-        oid = place_limit_option(
-            t["tradingsymbol"],
-            t["exchange"],
+        print("[DEBUG] === PLACING MAIN ORDER ===")
+        main_order_id = place_limit_option(
+            tradingsymbol,
+            exchange,
             px,
-            int(c.lots),
+            quantity,
             c.side.upper(),
         )
-        print(f"[DEBUG] Order placed successfully: order_id={oid}")
+        print(f"[DEBUG] Main order placed successfully: order_id={main_order_id}")
+        
     except Exception as e:
-        print(f"[ERROR] Failed to place order: {e}")
-        raise HTTPException(500, "order_placement_failed")
+        print(f"[ERROR] Failed to place main order: {e}")
+        print(f"[ERROR] Order parameters were: symbol={tradingsymbol}, quantity={quantity}, price={px}")
+        raise HTTPException(500, f"main_order_placement_failed: {str(e)}")
 
-    return {"order_id": oid, "status": "success"}
+    # Place stoploss order if requested
+    if has_stoploss:
+        try:
+            print("[DEBUG] === PLACING STOPLOSS ORDER ===")
+            print(f"[DEBUG] Stoploss order parameters:")
+            print(f"  - tradingsymbol: {tradingsymbol}")
+            print(f"  - exchange: {exchange}")
+            print(f"  - price: {c.stoploss}")
+            print(f"  - quantity: {quantity}")
+            print(f"  - side: SELL (exit order)")
+            
+            stoploss_order_id = place_limit_option(
+                tradingsymbol,
+                exchange,
+                c.stoploss,
+                quantity,
+                "SELL",  # Always SELL for exit
+            )
+            print(f"[DEBUG] Stoploss order placed successfully: order_id={stoploss_order_id}")
+            
+        except Exception as e:
+            print(f"[ERROR] Failed to place stoploss order: {e}")
+            print(f"[ERROR] Stoploss parameters were: symbol={tradingsymbol}, quantity={quantity}, price={c.stoploss}")
+            print(f"[WARNING] Main order was placed successfully: {main_order_id}")
+            # Don't fail the entire request if stoploss fails
+            stoploss_order_id = f"FAILED: {str(e)}"
+
+    # Place target order if requested
+    if has_target:
+        try:
+            print("[DEBUG] === PLACING TARGET ORDER ===")
+            print(f"[DEBUG] Target order parameters:")
+            print(f"  - tradingsymbol: {tradingsymbol}")
+            print(f"  - exchange: {exchange}")
+            print(f"  - price: {c.target}")
+            print(f"  - quantity: {quantity}")
+            print(f"  - side: SELL (exit order)")
+            
+            target_order_id = place_limit_option(
+                tradingsymbol,
+                exchange,
+                c.target,
+                quantity,
+                "SELL",  # Always SELL for exit
+            )
+            print(f"[DEBUG] Target order placed successfully: order_id={target_order_id}")
+            
+        except Exception as e:
+            print(f"[ERROR] Failed to place target order: {e}")
+            print(f"[ERROR] Target parameters were: symbol={tradingsymbol}, quantity={quantity}, price={c.target}")
+            print(f"[WARNING] Main order was placed successfully: {main_order_id}")
+            # Don't fail the entire request if target fails
+            target_order_id = f"FAILED: {str(e)}"
+
+    # Prepare response
+    response = {
+        "main_order_id": main_order_id,
+        "status": "success",
+        "quantity": quantity,
+        "lots": c.lots,
+        "lot_size": lot_size
+    }
+    
+    if has_stoploss:
+        response["stoploss_order_id"] = stoploss_order_id
+        response["stoploss_price"] = c.stoploss
+        
+    if has_target:
+        response["target_order_id"] = target_order_id
+        response["target_price"] = c.target
+    
+    print(f"[DEBUG] === ORDER PLACEMENT COMPLETE ===")
+    print(f"[DEBUG] Final response: {response}")
+    
+    return response

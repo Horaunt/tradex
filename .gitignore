@@ -1,2 +1,4 @@
 venv/
 backend/.env
+backend/firebase_service_account.json
+frontend/android/app/google-services.json

@@ -14,59 +14,42 @@ def load_instruments(path='instruments.csv'):
 def resolve(df, underlying, day, month, year, strike, opt):
     print(f"[DEBUG] Resolving: {underlying} {day}-{month}-{year} {strike} {opt}")
 
-    # Step 1: Filter down to underlying + option type + strike
     df = df[
         (df['exchange'] == 'NFO') &
         (df['name'].str.upper() == underlying.upper().strip()) &
-        (df['instrument_type'].str.upper().isin(['CE', 'PE', 'OPTIDX', 'OPTSTK'])) &
-        (df['strike'] == float(strike))
+        (df['instrument_type'].str.upper().str.endswith(opt.upper().strip()))
     ]
-    
+
     if df.empty:
-        print("[DEBUG] No instruments matched initial filters.")
+        print("[DEBUG] No instruments matched underlying+opt filter.")
         return None
 
-    # Step 2: Try exact expiry match
-    exact_match = df[
+    # filter by expiry
+    df = df[
         (df['expiry'].dt.year == year) &
         (df['expiry'].dt.month == MONTHS[month.upper()]) &
-        (df['expiry'].dt.day == day) &
-        (df['tradingsymbol'].str.upper().str.endswith(opt.upper().strip()))
+        (df['expiry'].dt.day == day)
     ]
-    if not exact_match.empty:
-        target = exact_match.iloc[0]
-        print(f"[DEBUG] Exact match found: {target.tradingsymbol}")
-        return {
-            'instrument_token': int(target.instrument_token),
-            'tradingsymbol': target.tradingsymbol,
-            'exchange': target.exchange
-        }
+    if df.empty:
+        print("[DEBUG] No instruments matched expiry, falling back to nearest expiry in month.")
+        df = df[
+            (df['expiry'].dt.year == year) &
+            (df['expiry'].dt.month == MONTHS[month.upper()])
+        ]
 
-    # Step 3: If no exact match, fallback to nearest expiry in that month
-    fallback = df[
-        (df['expiry'].dt.year == year) &
-        (df['expiry'].dt.month == MONTHS[month.upper()]) &
-        (df['tradingsymbol'].str.upper().str.endswith(opt.upper().strip()))
-    ]
-    if not fallback.empty:
-        target = fallback.sort_values('expiry').iloc[0]  # nearest expiry in that month
-        print(f"[DEBUG] Monthly expiry fallback match: {target.tradingsymbol}")
-        return {
-            'instrument_token': int(target.instrument_token),
-            'tradingsymbol': target.tradingsymbol,
-            'exchange': target.exchange
-        }
+    # Find the strike closest to requested
+    df['strike_diff'] = abs(df['strike'] - float(strike))
+    df = df.sort_values('strike_diff')
 
-    # Step 4: Final fallback — pick the nearest future expiry
-    future = df[df['expiry'] >= pd.Timestamp(year, MONTHS[month.upper()], day)]
-    if not future.empty:
-        target = future.sort_values('expiry').iloc[0]
-        print(f"[DEBUG] Nearest future expiry fallback: {target.tradingsymbol}")
-        return {
-            'instrument_token': int(target.instrument_token),
-            'tradingsymbol': target.tradingsymbol,
-            'exchange': target.exchange
-        }
+    if df.empty:
+        print("[DEBUG] No matching instrument after strike fallback.")
+        return None
 
-    print("[DEBUG] No matching instrument found even after fallbacks.")
-    return None
+    target = df.iloc[0]
+    print(f"[DEBUG] Resolved instrument: {target.tradingsymbol}, lot_size: {target.lot_size}")
+    return {
+        'instrument_token': int(target.instrument_token),
+        'tradingsymbol': target.tradingsymbol,
+        'exchange': target.exchange,
+        'lot_size': int(target.lot_size)
+    }
