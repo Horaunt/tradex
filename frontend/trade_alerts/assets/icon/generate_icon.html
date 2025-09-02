@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Trade Alerts Icon Generator</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; background: #f5f5f5; }
+        .container { max-width: 600px; margin: 0 auto; background: white; padding: 20px; border-radius: 10px; }
+        .icon-preview { width: 200px; height: 200px; margin: 20px auto; display: block; border: 1px solid #ddd; }
+        button { background: #1976D2; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; }
+        button:hover { background: #1565C0; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Trade Alerts App Icon Generator</h1>
+        <p>Click the button below to generate and download a 1024x1024 app icon:</p>
+        
+        <canvas id="iconCanvas" class="icon-preview" width="1024" height="1024"></canvas>
+        
+        <button onclick="generateIcon()">Generate & Download Icon</button>
+        
+        <script>
+            function generateIcon() {
+                const canvas = document.getElementById('iconCanvas');
+                const ctx = canvas.getContext('2d');
+                
+                // Set canvas size to 1024x1024
+                canvas.width = 1024;
+                canvas.height = 1024;
+                
+                // Create gradient background
+                const gradient = ctx.createLinearGradient(0, 0, 1024, 1024);
+                gradient.addColorStop(0, '#1976D2');
+                gradient.addColorStop(1, '#1565C0');
+                
+                // Fill background
+                ctx.fillStyle = gradient;
+                ctx.fillRect(0, 0, 1024, 1024);
+                
+                // Add rounded corners effect
+                ctx.globalCompositeOperation = 'destination-in';
+                ctx.beginPath();
+                ctx.roundRect(0, 0, 1024, 1024, 150);
+                ctx.fill();
+                ctx.globalCompositeOperation = 'source-over';
+                
+                // Draw trending up arrow
+                ctx.strokeStyle = 'white';
+                ctx.fillStyle = 'white';
+                ctx.lineWidth = 40;
+                ctx.lineCap = 'round';
+                ctx.lineJoin = 'round';
+                
+                // Arrow line
+                ctx.beginPath();
+                ctx.moveTo(200, 700);
+                ctx.lineTo(400, 500);
+                ctx.lineTo(600, 350);
+                ctx.lineTo(824, 200);
+                ctx.stroke();
+                
+                // Arrow head
+                ctx.beginPath();
+                ctx.moveTo(824, 200);
+                ctx.lineTo(750, 200);
+                ctx.lineTo(750, 130);
+                ctx.lineTo(824, 200);
+                ctx.lineTo(824, 274);
+                ctx.lineTo(750, 274);
+                ctx.closePath();
+                ctx.fill();
+                
+                // Add text
+                ctx.font = 'bold 120px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillStyle = 'white';
+                ctx.fillText('TRADE', 512, 850);
+                
+                // Download the image
+                const link = document.createElement('a');
+                link.download = 'app_icon.png';
+                link.href = canvas.toDataURL();
+                link.click();
+            }
+            
+            // Generate preview on load
+            window.onload = function() {
+                generateIcon();
+            }
+        </script>
+    </div>
+</body>
+</html>

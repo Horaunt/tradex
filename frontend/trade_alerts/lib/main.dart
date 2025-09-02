@@ -88,10 +88,7 @@ class TradeAlert {
   }
 
   // Copy with method for status updates
-  TradeAlert copyWith({
-    TradeStatus? status,
-    DateTime? timestamp,
-  }) {
+  TradeAlert copyWith({TradeStatus? status, DateTime? timestamp}) {
     return TradeAlert(
       underlying: underlying,
       day: day,
@@ -136,9 +133,35 @@ class TradeAlertApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Trade Alerts',
+      debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
+        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF1976D2)),
         useMaterial3: true,
+        appBarTheme: const AppBarTheme(
+          elevation: 0,
+          centerTitle: true,
+          backgroundColor: Color(0xFF1976D2),
+          foregroundColor: Colors.white,
+        ),
+        cardTheme: const CardThemeData(
+          elevation: 3,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.all(Radius.circular(16))),
+        ),
+        elevatedButtonTheme: ElevatedButtonThemeData(
+          style: ElevatedButton.styleFrom(
+            elevation: 2,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+          ),
+        ),
+        outlinedButtonTheme: OutlinedButtonThemeData(
+          style: OutlinedButton.styleFrom(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+          ),
+        ),
       ),
       home: const TradeAlertHomePage(),
     );
@@ -158,14 +181,17 @@ class _TradeAlertHomePageState extends State<TradeAlertHomePage> {
   final TextEditingController _lotsController = TextEditingController();
 
   // Getters for filtered trade lists
-  List<TradeAlert> get pendingTrades => 
-      _tradeAlerts.where((trade) => trade.status == TradeStatus.pending).toList();
-  
-  List<TradeAlert> get placedTrades => 
-      _tradeAlerts.where((trade) => trade.status == TradeStatus.placed).toList();
-  
-  List<TradeAlert> get rejectedTrades => 
-      _tradeAlerts.where((trade) => trade.status == TradeStatus.rejected).toList();
+  List<TradeAlert> get pendingTrades => _tradeAlerts
+      .where((trade) => trade.status == TradeStatus.pending)
+      .toList();
+
+  List<TradeAlert> get placedTrades => _tradeAlerts
+      .where((trade) => trade.status == TradeStatus.placed)
+      .toList();
+
+  List<TradeAlert> get rejectedTrades => _tradeAlerts
+      .where((trade) => trade.status == TradeStatus.rejected)
+      .toList();
   String? _fcmToken;
 
   @override
@@ -237,7 +263,9 @@ class _TradeAlertHomePageState extends State<TradeAlertHomePage> {
 
   void _updateTradeStatus(String tradeId, TradeStatus status) {
     setState(() {
-      final index = _tradeAlerts.indexWhere((trade) => trade.tradeId == tradeId);
+      final index = _tradeAlerts.indexWhere(
+        (trade) => trade.tradeId == tradeId,
+      );
       if (index != -1) {
         _tradeAlerts[index] = _tradeAlerts[index].copyWith(status: status);
       }
@@ -271,7 +299,7 @@ class _TradeAlertHomePageState extends State<TradeAlertHomePage> {
 
     try {
       final response = await http.post(
-        Uri.parse('http://10.42.204.215:8000/order'),
+        Uri.parse('http://172.16.204.18:8000/order'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'trade_id': trade.tradeId,
@@ -319,65 +347,220 @@ class _TradeAlertHomePageState extends State<TradeAlertHomePage> {
     int selectedLots = 1;
     showDialog(
       context: context,
+      barrierDismissible: false,
       builder: (BuildContext context) {
         return StatefulBuilder(
           builder: (context, setState) {
-            return AlertDialog(
-              title: const Text('Select Lots'),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text('How many lots for ${trade.title}?'),
-                  const SizedBox(height: 16),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      IconButton(
-                        onPressed: selectedLots > 1
-                            ? () => setState(() => selectedLots--)
-                            : null,
-                        icon: const Icon(Icons.remove_circle_outline),
-                      ),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 20,
-                          vertical: 8,
-                        ),
-                        decoration: BoxDecoration(
-                          border: Border.all(color: Colors.grey),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Text(
-                          '$selectedLots',
-                          style: const TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
+            return Dialog(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20),
+              ),
+              elevation: 8,
+              child: Container(
+                padding: const EdgeInsets.all(24),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(20),
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [Colors.white, Colors.blue.shade50],
+                  ),
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Header
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF1976D2).withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: const Icon(
+                            Icons.shopping_cart,
+                            color: Color(0xFF1976D2),
+                            size: 24,
                           ),
                         ),
+                        const SizedBox(width: 12),
+                        const Expanded(
+                          child: Text(
+                            'Select Lot Size',
+                            style: TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
+                              color: Color(0xFF2C3E50),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 20),
+
+                    // Trade info
+                    Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade100,
+                        borderRadius: BorderRadius.circular(12),
                       ),
-                      IconButton(
-                        onPressed: selectedLots < 10
-                            ? () => setState(() => selectedLots++)
-                            : null,
-                        icon: const Icon(Icons.add_circle_outline),
+                      child: Column(
+                        children: [
+                          Text(
+                            trade.title,
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            '${trade.underlying} ${trade.strike} ${trade.opt}',
+                            style: TextStyle(
+                              fontSize: 14,
+                              color: Colors.grey[600],
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
-                ],
+                    ),
+                    const SizedBox(height: 24),
+
+                    // Lot selector
+                    const Text(
+                      'Number of Lots',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFF2C3E50),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 8,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(
+                          color: const Color(0xFF1976D2).withOpacity(0.3),
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.05),
+                            blurRadius: 8,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                            onPressed: selectedLots > 1
+                                ? () => setState(() => selectedLots--)
+                                : null,
+                            icon: Icon(
+                              Icons.remove_circle_outline,
+                              color: selectedLots > 1
+                                  ? const Color(0xFF1976D2)
+                                  : Colors.grey,
+                              size: 28,
+                            ),
+                          ),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 24,
+                              vertical: 12,
+                            ),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF1976D2).withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Text(
+                              '$selectedLots',
+                              style: const TextStyle(
+                                fontSize: 24,
+                                fontWeight: FontWeight.bold,
+                                color: Color(0xFF1976D2),
+                              ),
+                            ),
+                          ),
+                          IconButton(
+                            onPressed: selectedLots < 10
+                                ? () => setState(() => selectedLots++)
+                                : null,
+                            icon: Icon(
+                              Icons.add_circle_outline,
+                              color: selectedLots < 10
+                                  ? const Color(0xFF1976D2)
+                                  : Colors.grey,
+                              size: 28,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 32),
+
+                    // Action buttons
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: () => Navigator.of(context).pop(),
+                            style: OutlinedButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(vertical: 16),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              side: const BorderSide(color: Colors.grey),
+                            ),
+                            child: const Text(
+                              'Cancel',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 16),
+                        Expanded(
+                          child: ElevatedButton(
+                            onPressed: () {
+                              Navigator.of(context).pop();
+                              _placeTrade(trade, selectedLots);
+                            },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF1976D2),
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(vertical: 16),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              elevation: 2,
+                            ),
+                            child: const Text(
+                              'Place Order',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(context).pop(),
-                  child: const Text('Cancel'),
-                ),
-                ElevatedButton(
-                  onPressed: () {
-                    Navigator.of(context).pop();
-                    _placeTrade(trade, selectedLots);
-                  },
-                  child: const Text('Place Order'),
-                ),
-              ],
             );
           },
         );
@@ -425,22 +608,39 @@ class _TradeAlertHomePageState extends State<TradeAlertHomePage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        title: const Text('Trade Alerts'),
-        centerTitle: true,
+        title: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.trending_up, color: Colors.white, size: 28),
+            SizedBox(width: 12),
+            Text(
+              'Trade Alerts',
+              style: TextStyle(
+                fontSize: 22,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 0.5,
+              ),
+            ),
+          ],
+        ),
+        backgroundColor: Color(0xFF1976D2),
+        foregroundColor: Colors.white,
+        elevation: 4,
+        shadowColor: Colors.black26,
       ),
+      backgroundColor: Color(0xFFF8F9FA),
       body: Column(
         children: [
           // Header
           Container(
-            padding: const EdgeInsets.all(16),
+            padding: EdgeInsets.all(16),
             child: Text(
-              _tradeAlerts.isEmpty 
-                  ? 'Waiting for Trade Alerts' 
+              _tradeAlerts.isEmpty
+                  ? 'Waiting for Trade Alerts'
                   : 'Trade Alerts (${_tradeAlerts.length})',
-              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                fontWeight: FontWeight.bold,
-              ),
+              style: Theme.of(
+                context,
+              ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
             ),
           ),
           // Trade List
@@ -455,23 +655,74 @@ class _TradeAlertHomePageState extends State<TradeAlertHomePage> {
   }
 
   Widget _buildEmptyState() {
-    return const Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.notifications_active, size: 80, color: Colors.grey),
-          SizedBox(height: 16),
-          Text(
-            'Waiting for trade alerts...',
-            style: TextStyle(fontSize: 18, color: Colors.grey),
-          ),
-          SizedBox(height: 8),
-          Text(
-            'You will receive notifications when new trades are available',
-            textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 14, color: Colors.grey),
-          ),
-        ],
+    return Center(
+      child: Container(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: const Color(0xFF1976D2).withOpacity(0.1),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.trending_up,
+                size: 64,
+                color: Color(0xFF1976D2),
+              ),
+            ),
+            const SizedBox(height: 24),
+            const Text(
+              'No Trade Alerts Yet',
+              style: TextStyle(
+                fontSize: 24,
+                fontWeight: FontWeight.bold,
+                color: Color(0xFF2C3E50),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'You will receive notifications when new trades are available.\nMake sure notifications are enabled for this app.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 16,
+                color: Colors.grey[600],
+                height: 1.5,
+              ),
+            ),
+            const SizedBox(height: 32),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              decoration: BoxDecoration(
+                color: const Color(0xFF1976D2).withOpacity(0.1),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: const Color(0xFF1976D2).withOpacity(0.3),
+                ),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.info_outline,
+                    size: 20,
+                    color: const Color(0xFF1976D2),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Connected to trades topic',
+                    style: TextStyle(
+                      color: const Color(0xFF1976D2),
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -482,21 +733,33 @@ class _TradeAlertHomePageState extends State<TradeAlertHomePage> {
       children: [
         // Pending Trades Section
         if (pendingTrades.isNotEmpty) ...[
-          _buildSectionHeader('Pending Trades', Colors.orange, pendingTrades.length),
+          _buildSectionHeader(
+            'Pending Trades',
+            Colors.orange,
+            pendingTrades.length,
+          ),
           ...pendingTrades.map((trade) => _buildTradeCard(trade)),
           const SizedBox(height: 16),
         ],
-        
+
         // Placed Trades Section
         if (placedTrades.isNotEmpty) ...[
-          _buildSectionHeader('Placed Orders', Colors.green, placedTrades.length),
+          _buildSectionHeader(
+            'Placed Orders',
+            Colors.green,
+            placedTrades.length,
+          ),
           ...placedTrades.map((trade) => _buildTradeCard(trade)),
           const SizedBox(height: 16),
         ],
-        
+
         // Rejected Trades Section
         if (rejectedTrades.isNotEmpty) ...[
-          _buildSectionHeader('Rejected Trades', Colors.red, rejectedTrades.length),
+          _buildSectionHeader(
+            'Rejected Trades',
+            Colors.red,
+            rejectedTrades.length,
+          ),
           ...rejectedTrades.map((trade) => _buildTradeCard(trade)),
         ],
       ],
@@ -505,24 +768,48 @@ class _TradeAlertHomePageState extends State<TradeAlertHomePage> {
 
   Widget _buildSectionHeader(String title, Color color, int count) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 12),
+      margin: const EdgeInsets.only(bottom: 16, top: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withOpacity(0.3)),
+      ),
       child: Row(
         children: [
           Container(
-            width: 4,
-            height: 20,
+            width: 6,
+            height: 24,
             decoration: BoxDecoration(
               color: color,
-              borderRadius: BorderRadius.circular(2),
+              borderRadius: BorderRadius.circular(3),
             ),
           ),
           const SizedBox(width: 12),
-          Text(
-            '$title ($count)',
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
+          Expanded(
+            child: Text(
+              title,
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: color,
+                letterSpacing: 0.5,
+              ),
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            decoration: BoxDecoration(
               color: color,
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Text(
+              count.toString(),
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: 14,
+              ),
             ),
           ),
         ],
@@ -545,16 +832,22 @@ class _TradeAlertHomePageState extends State<TradeAlertHomePage> {
     }
 
     return Card(
-      margin: const EdgeInsets.only(bottom: 12),
-      elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      margin: const EdgeInsets.only(bottom: 16),
+      elevation: 4,
+      shadowColor: Colors.black12,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: Container(
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: statusColor.withOpacity(0.3), width: 1),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: statusColor.withOpacity(0.2), width: 2),
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Colors.white, statusColor.withOpacity(0.02)],
+          ),
         ),
         child: Padding(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(20),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -571,7 +864,10 @@ class _TradeAlertHomePageState extends State<TradeAlertHomePage> {
                     ),
                   ),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
                     decoration: BoxDecoration(
                       color: statusColor.withOpacity(0.1),
                       borderRadius: BorderRadius.circular(12),
@@ -589,16 +885,22 @@ class _TradeAlertHomePageState extends State<TradeAlertHomePage> {
                 ],
               ),
               const SizedBox(height: 12),
-              
+
               // Trade details
               _buildDetailRow('Underlying', trade.underlying),
               _buildDetailRow('Strike', trade.strike),
               _buildDetailRow('Option Type', trade.opt),
-              _buildDetailRow('Entry Range', '${trade.entryLow} - ${trade.entryHigh}'),
+              _buildDetailRow(
+                'Entry Range',
+                '${trade.entryLow} - ${trade.entryHigh}',
+              ),
               _buildDetailRow('Stop Loss', trade.stoploss),
               if (trade.targets.isNotEmpty)
-                _buildDetailRow('Targets', trade.targets.map((t) => t.toString()).join(', ')),
-              
+                _buildDetailRow(
+                  'Targets',
+                  trade.targets.map((t) => t.toString()).join(', '),
+                ),
+
               // Action buttons for pending trades
               if (trade.status == TradeStatus.pending) ...[
                 const SizedBox(height: 16),

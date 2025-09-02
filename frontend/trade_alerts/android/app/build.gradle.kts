@@ -7,12 +7,12 @@ plugins {
 
 android {
     namespace = "com.example.trade_alerts"
-    compileSdk = 34  // explicitly set compileSdk
+    compileSdk = 35  // explicitly set compileSdk
 
     defaultConfig {
         applicationId = "com.example.trade_alerts"
         minSdk = flutter.minSdkVersion
-        targetSdk = 34
+        targetSdk = 35
         versionCode = 1
         versionName = "1.0"
         multiDexEnabled = true
