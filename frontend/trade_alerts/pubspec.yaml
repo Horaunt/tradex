@@ -41,6 +41,15 @@ dependencies:
   
   # HTTP client for API calls
   http: ^1.1.0
+  
+  # WebView for Zerodha authentication
+  webview_flutter: ^4.4.2
+  
+  # Environment variables for secrets
+  flutter_dotenv: ^5.1.0
+  
+  # Local storage for secure token persistence
+  shared_preferences: ^2.2.2
 
 dev_dependencies:
   flutter_test:
@@ -100,6 +109,7 @@ flutter:
   # Assets
   assets:
     - assets/icon/
+    - .env
 
   # To add assets to your application, add an assets section, like this:
   # assets:

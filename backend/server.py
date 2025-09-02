@@ -1,6 +1,7 @@
 import os, uuid, json
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException,Header,Request
 from pydantic import BaseModel
+from kiteconnect import KiteConnect
 from instruments import load_instruments, resolve
 from broker import place_limit_option, place_stoploss_order, place_target_order
 from notify import push_fcm
@@ -11,6 +12,10 @@ load_dotenv()
 app = FastAPI()
 INSTR = None
 TRADES = {}
+# kite = KiteConnect(api_key=Z_API_KEY)
+Z_API_KEY = os.getenv("Z_API_KEY")
+Z_API_SECRET = os.getenv("Z_API_SECRET")
+kite = KiteConnect(api_key=Z_API_KEY)
 
 class Confirm(BaseModel):
     trade_id: str
@@ -118,144 +123,83 @@ def ingest(body: Raw):
     return {"trade_id": tid}
 
 @app.post("/order")
-def order(c: Confirm):
+def order(c: Confirm, access_token: str = Header(...)):
     print(f"[DEBUG] Place order request received: {c.dict()}")
+    print(f"[DEBUG] Access token received from client.")
+
+    # Initialize Kite client with the provided access token
+    kite = KiteConnect(api_key=Z_API_KEY)
+    kite.set_access_token(access_token)
 
     # Validate trade exists
     t = TRADES.get(c.trade_id)
     if not t:
-        print(f"[ERROR] Trade not found for trade_id={c.trade_id}")
-        print(f"[DEBUG] Available trade_ids: {list(TRADES.keys())}")
         raise HTTPException(404, "trade_not_found")
 
-    # Get and validate lot size
-    lot_size = t.get("lot_size")
+    lot_size = int(t.get("lot_size"))
     tradingsymbol = t.get("tradingsymbol")
     exchange = t.get("exchange")
-    
-    print(f"[DEBUG] Retrieved lot_size: {lot_size} (type: {type(lot_size)})")
-    print(f"[DEBUG] Trading symbol: {tradingsymbol}")
-    print(f"[DEBUG] Exchange: {exchange}")
-    
-    if not lot_size:
-        print(f"[ERROR] Lot size not available for instrument: {tradingsymbol}")
-        print(f"[ERROR] Full trade data: {t}")
-        raise HTTPException(500, "lot_size_not_found")
 
-    # Ensure lot_size is integer for calculation
-    try:
-        lot_size = int(lot_size)
-    except (ValueError, TypeError) as e:
-        print(f"[ERROR] Invalid lot_size format in stored trade: {lot_size}, error: {e}")
-        raise HTTPException(500, "invalid_lot_size_format")
-
-    # Calculate final quantity - this is correct now
     quantity = c.lots * lot_size
-    print(f"[DEBUG] Order calculation: {c.lots} lots × {lot_size} lot_size = {quantity} quantity")
-
-    # Validate entry price
     try:
         px = float(t["entry_high"])
-        print(f"[DEBUG] Order price: {px}")
-    except Exception as e:
-        print(f"[ERROR] Invalid entry_high value in trade={t}: {e}")
+    except Exception:
         raise HTTPException(500, "invalid_entry_price")
-    
-    print(f"[DEBUG] Final main order parameters:")
-    print(f"  - tradingsymbol: {tradingsymbol}")
-    print(f"  - exchange: {exchange}")
-    print(f"  - price: {px}")
-    print(f"  - quantity: {quantity} (final calculated quantity)")
-    print(f"  - side: {c.side.upper()}")
-    
-    # Check for stoploss and target (ignore if 0 or None)
+
     has_stoploss = c.stoploss is not None and c.stoploss > 0
     has_target = c.target is not None and c.target > 0
-    print(f"[DEBUG] Exit orders requested - Stoploss: {has_stoploss} (value: {c.stoploss}), Target: {has_target} (value: {c.target})")
-    
-    if has_stoploss:
-        print(f"[DEBUG] Stoploss trigger price: {c.stoploss}")
-    if has_target:
-        print(f"[DEBUG] Target limit price: {c.target}")
 
-    # Place the main order
     main_order_id = None
     stoploss_order_id = None
     target_order_id = None
-    
+
     try:
-        print("[DEBUG] === PLACING MAIN ORDER ===")
-        main_order_id = place_limit_option(
-            tradingsymbol,
-            exchange,
-            px,
-            quantity,
-            c.side.upper(),
+        main_order_id = kite.place_order(
+            variety="regular",
+            exchange=exchange,
+            tradingsymbol=tradingsymbol,
+            transaction_type=c.side.upper(),
+            quantity=quantity,
+            product="MIS",
+            order_type="LIMIT",
+            price=px,
+            validity="DAY"
         )
-        print(f"[DEBUG] Main order placed successfully: order_id={main_order_id}")
-        
     except Exception as e:
-        print(f"[ERROR] Failed to place main order: {e}")
-        print(f"[ERROR] Order parameters were: symbol={tradingsymbol}, quantity={quantity}, price={px}")
         raise HTTPException(500, f"main_order_placement_failed: {str(e)}")
 
-    # Place stoploss order if requested
     if has_stoploss:
         try:
-            print("[DEBUG] === PLACING STOPLOSS ORDER ===")
-            print(f"[DEBUG] Stoploss order parameters:")
-            print(f"  - tradingsymbol: {tradingsymbol}")
-            print(f"  - exchange: {exchange}")
-            print(f"  - trigger_price: {c.stoploss}")
-            print(f"  - quantity: {quantity}")
-            print(f"  - side: SELL (exit order)")
-            
-            stoploss_order_id = place_stoploss_order(
-                tradingsymbol,
-                exchange,
-                c.stoploss,  # trigger price
-                quantity,
-                "SELL",  # Always SELL for exit
-                "STOPLOSS"
+            stoploss_order_id = kite.place_order(
+                variety="regular",
+                exchange=exchange,
+                tradingsymbol=tradingsymbol,
+                transaction_type="SELL",
+                quantity=quantity,
+                product="MIS",
+                order_type="SL",
+                trigger_price=c.stoploss,
+                validity="DAY"
             )
-            print(f"[DEBUG] Stoploss order placed successfully: order_id={stoploss_order_id}")
-            
         except Exception as e:
-            print(f"[ERROR] Failed to place stoploss order: {e}")
-            print(f"[ERROR] Stoploss parameters were: symbol={tradingsymbol}, quantity={quantity}, trigger_price={c.stoploss}")
-            print(f"[WARNING] Main order was placed successfully: {main_order_id}")
-            # Don't fail the entire request if stoploss fails
             stoploss_order_id = f"FAILED: {str(e)}"
 
-    # Place target order if requested
     if has_target:
         try:
-            print("[DEBUG] === PLACING TARGET ORDER ===")
-            print(f"[DEBUG] Target order parameters:")
-            print(f"  - tradingsymbol: {tradingsymbol}")
-            print(f"  - exchange: {exchange}")
-            print(f"  - limit_price: {c.target}")
-            print(f"  - quantity: {quantity}")
-            print(f"  - side: SELL (exit order)")
-            
-            target_order_id = place_target_order(
-                tradingsymbol,
-                exchange,
-                c.target,  # limit price
-                quantity,
-                "SELL",  # Always SELL for exit
-                "TARGET"
+            target_order_id = kite.place_order(
+                variety="regular",
+                exchange=exchange,
+                tradingsymbol=tradingsymbol,
+                transaction_type="SELL",
+                quantity=quantity,
+                product="MIS",
+                order_type="LIMIT",
+                price=c.target,
+                validity="DAY"
             )
-            print(f"[DEBUG] Target order placed successfully: order_id={target_order_id}")
-            
         except Exception as e:
-            print(f"[ERROR] Failed to place target order: {e}")
-            print(f"[ERROR] Target parameters were: symbol={tradingsymbol}, quantity={quantity}, limit_price={c.target}")
-            print(f"[WARNING] Main order was placed successfully: {main_order_id}")
-            # Don't fail the entire request if target fails
             target_order_id = f"FAILED: {str(e)}"
 
-    # Prepare response
     response = {
         "main_order_id": main_order_id,
         "status": "success",
@@ -263,16 +207,39 @@ def order(c: Confirm):
         "lots": c.lots,
         "lot_size": lot_size
     }
-    
+
     if has_stoploss:
         response["stoploss_order_id"] = stoploss_order_id
         response["stoploss_price"] = c.stoploss
-        
     if has_target:
         response["target_order_id"] = target_order_id
         response["target_price"] = c.target
-    
-    print(f"[DEBUG] === ORDER PLACEMENT COMPLETE ===")
-    print(f"[DEBUG] Final response: {response}")
-    
+
     return response
+
+class AuthRequest(BaseModel):
+    request_token: str
+
+@app.post("/api/zerodha/auth")
+async def zerodha_auth(auth_request: AuthRequest):
+    try:
+        # Exchange request_token for access_token
+        data = kite.generate_session(
+            auth_request.request_token,
+            api_secret=Z_API_SECRET
+        )
+
+        access_token = data["access_token"]
+        kite.set_access_token(access_token)
+
+        # (Optional) Save the access_token securely for later use
+        with open("access_token.txt", "w") as f:
+            f.write(access_token)
+
+        return {
+            "status": "success",
+            "message": "Authentication successful",
+            "access_token": access_token
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))

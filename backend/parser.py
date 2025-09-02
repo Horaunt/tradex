@@ -2,7 +2,7 @@ import re
 from datetime import datetime
 MONTHS={'JAN':1,'FEB':2,'MAR':3,'APR':4,'MAY':5,'JUN':6,'JUL':7,'AUG':8,'SEP':9,'OCT':10,'NOV':11,'DEC':12}
 def parse_trade(text):
-    sym=re.search(r'Enter:\s*([A-Z]+)\s+(\d{2})\s+([A-Z]{3})\s+(\d{4,6})\s+(CALL|PUT)',text,re.I)
+    sym = re.search(r'Enter:\s*([A-Z]+)\s+(\d{1,2})\s+([A-Z]{3})\s+(\d{1,6})\s+(CALL|PUT)', text, re.I)
     rng=re.search(r'Entry Price Range:\s*([0-9]+(?:\.[0-9]+)?)\s*-\s*([0-9]+(?:\.[0-9]+)?)',text,re.I)
     sl=re.search(r'Stop\s*Loss:\s*([0-9]+(?:\.[0-9]+)?)',text,re.I)
     tgs=re.findall(r'Target\s*\d+:\s*([0-9]+(?:\.[0-9]+)?)',text,re.I)

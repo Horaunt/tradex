@@ -3,6 +3,10 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'screens/zerodha_login_screen.dart';
+import 'services/api_service.dart';
+import 'services/auth_service.dart';
 
 // Trade Status Enum
 enum TradeStatus { pending, placed, rejected }
@@ -121,8 +125,14 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  
+  // Load environment variables
+  await dotenv.load(fileName: ".env");
+  
   await Firebase.initializeApp();
+  
   FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+  
   runApp(const TradeAlertApp());
 }
 
@@ -178,6 +188,7 @@ class TradeAlertHomePage extends StatefulWidget {
 class _TradeAlertHomePageState extends State<TradeAlertHomePage> {
   List<TradeAlert> _tradeAlerts = [];
   bool _isLoading = false;
+  bool _isAuthenticated = false;
   final TextEditingController _lotsController = TextEditingController();
 
   // Getters for filtered trade lists
@@ -197,10 +208,18 @@ class _TradeAlertHomePageState extends State<TradeAlertHomePage> {
   @override
   void initState() {
     super.initState();
-    _initializeFirebase();
+    _setupFirebaseMessaging();
+    _checkAuthenticationStatus();
   }
 
-  Future<void> _initializeFirebase() async {
+  Future<void> _checkAuthenticationStatus() async {
+    final isLoggedIn = await AuthService.isLoggedIn();
+    setState(() {
+      _isAuthenticated = isLoggedIn;
+    });
+  }
+
+  Future<void> _setupFirebaseMessaging() async {
     try {
       // Request permission for notifications
       NotificationSettings settings = await FirebaseMessaging.instance
@@ -298,31 +317,29 @@ class _TradeAlertHomePageState extends State<TradeAlertHomePage> {
     });
 
     try {
-      final response = await http.post(
-        Uri.parse('http://172.16.204.18:8000/order'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'trade_id': trade.tradeId,
-          'lots': lots,
-          'side': 'BUY',
-          'stoploss': double.tryParse(trade.stoploss)?.toInt() ?? 0,
-          'target': trade.targets.isNotEmpty ? trade.targets.first.toInt() : 0,
-        }),
+      final result = await ApiService.placeOrder(
+        tradeId: trade.tradeId,
+        lots: lots,
+        side: 'BUY',
+        stoploss: double.tryParse(trade.stoploss)?.toInt() ?? 0,
+        target: trade.targets.isNotEmpty ? trade.targets.first.toInt() : 0,
       );
 
-      if (response.statusCode == 200) {
+      if (result.success) {
         _updateTradeStatus(trade.tradeId, TradeStatus.placed);
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Order placed successfully!'),
+          SnackBar(
+            content: Text('Order placed successfully: ${result.message}'),
             backgroundColor: Colors.green,
           ),
         );
       } else {
-        final errorData = jsonDecode(response.body);
-        _showErrorDialog(
-          'Failed to place order: ${errorData['detail'] ?? 'Unknown error'}',
-        );
+        if (result.requiresReauth) {
+          // Token expired, show login dialog
+          _showTokenExpiredDialog();
+        } else {
+          _showErrorDialog('Failed to place order: ${result.message}');
+        }
       }
     } catch (e) {
       _showErrorDialog('Network error: $e');
@@ -604,6 +621,106 @@ class _TradeAlertHomePageState extends State<TradeAlertHomePage> {
     );
   }
 
+  void _showTokenExpiredDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Session Expired'),
+          content: const Text('Your authentication session has expired. Please login again to continue.'),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                _showZerodhaLogin();
+              },
+              child: const Text('Login Again'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _showZerodhaLogin() {
+    final apiKey = dotenv.env['ZERODHA_API_KEY'] ?? '';
+    final redirectUrl = dotenv.env['ZERODHA_REDIRECT_URL'] ?? '';
+    
+    // Debug logging
+    print('API Key loaded: ${apiKey.isNotEmpty ? 'YES (${apiKey.length} chars)' : 'NO'}');
+    print('Redirect URL loaded: ${redirectUrl.isNotEmpty ? 'YES' : 'NO'}');
+    print('API Key: $apiKey');
+    print('Redirect URL: $redirectUrl');
+    
+    if (apiKey.isEmpty || redirectUrl.isEmpty) {
+      _showErrorDialog('Zerodha API configuration missing. Please check your .env file.');
+      return;
+    }
+    
+    if (apiKey == 'your_zerodha_api_key_here') {
+      _showErrorDialog('Please update your .env file with your actual Zerodha API key.');
+      return;
+    }
+    
+    // Validate API key length (Zerodha API keys can be 16 or 32 characters)
+    if (apiKey.length < 16) {
+      _showErrorDialog('Invalid API key format. Zerodha API keys should be at least 16 characters.');
+      return;
+    }
+    
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => ZerodhaLoginScreen(
+          apiKey: apiKey,
+          redirectUrl: redirectUrl,
+        ),
+      ),
+    ).then((_) {
+      // Refresh authentication status after login attempt
+      _checkAuthenticationStatus();
+    });
+  }
+
+  void _showLogoutDialog() {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Logout'),
+          content: const Text('Are you sure you want to logout from your Zerodha account?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () async {
+                Navigator.of(context).pop();
+                await AuthService.logout();
+                setState(() {
+                  _isAuthenticated = false;
+                });
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Logged out successfully'),
+                    backgroundColor: Colors.orange,
+                  ),
+                );
+              },
+              child: const Text('Logout'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -627,6 +744,13 @@ class _TradeAlertHomePageState extends State<TradeAlertHomePage> {
         foregroundColor: Colors.white,
         elevation: 4,
         shadowColor: Colors.black26,
+        actions: [
+          IconButton(
+            onPressed: _isAuthenticated ? _showLogoutDialog : _showZerodhaLogin,
+            icon: Icon(_isAuthenticated ? Icons.logout : Icons.account_circle),
+            tooltip: _isAuthenticated ? 'Logout' : 'Connect Zerodha Account',
+          ),
+        ],
       ),
       backgroundColor: Color(0xFFF8F9FA),
       body: Column(
@@ -721,6 +845,47 @@ class _TradeAlertHomePageState extends State<TradeAlertHomePage> {
                 ],
               ),
             ),
+            const SizedBox(height: 24),
+            
+            // Zerodha Connection Button
+            if (!_isAuthenticated)
+              ElevatedButton.icon(
+                onPressed: _showZerodhaLogin,
+                icon: const Icon(Icons.account_balance, size: 20),
+                label: const Text('Connect Zerodha Account'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF1976D2),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(25),
+                  ),
+                  elevation: 2,
+                ),
+              )
+            else
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                decoration: BoxDecoration(
+                  color: Colors.green.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: Colors.green.withOpacity(0.3)),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.check_circle, size: 20, color: Colors.green),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Zerodha Account Connected',
+                      style: TextStyle(
+                        color: Colors.green,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
           ],
         ),
       ),
